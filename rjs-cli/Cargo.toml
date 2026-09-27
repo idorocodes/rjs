@@ -1,0 +1,12 @@
+[package]
+name = "rjs-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "rjs"
+path = "src/main.rs"
+
+[dependencies]
+rjs-parser = { path = "../rjs-parser" }
+rjs-runtime = { path = "../rjs-runtime" }
