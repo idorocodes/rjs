@@ -49,13 +49,149 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Number(n))
             }
+            Token::String(s) => {
+                self.advance();
+                Ok(Expr::String(s))
+            }
+            Token::Identifier(id) => {
+                self.advance();
+                Ok(Expr::Identifier(id))
+            }
+            Token::True => {
+                self.advance();
+                Ok(Expr::Boolean(true))
+            }
+            Token::False => {
+                self.advance();
+                Ok(Expr::Boolean(false))
+            }
+            Token::Null => {
+                self.advance();
+                Ok(Expr::Null)
+            }
+            Token::Undefined => {
+                self.advance();
+                Ok(Expr::Undefined)
+            }
             _ => Err(ParseError {
-                message: String::from("Cannot parse this at this current time"),
+                message: format!("Cannot parse unexpected token: {:?}", self.peek()),
             }),
         }
     }
+
+    pub fn statement(&mut self) -> Result<Stmt, ParseError> {
+        if self.check(Token::Let) {
+            self.advance(); 
+            
+         
+            let name = match self.advance() {
+                Token::Identifier(id) => id,
+                other => return Err(ParseError {
+                    message: format!("Expected variable name after 'let', found {:?}", other),
+                }),
+            };
+
+            self.expect(Token::Equals)?; // consume '='
+            let value = self.expression()?;
+            self.expect(Token::Semicolon)?; // consume ';'
+
+            Ok(Stmt::Let { name, value })
+        } else {
+           
+            let expr = self.expression()?;
+            self.expect(Token::Semicolon)?;
+            Ok(Stmt::ExprStmt(expr))
+        }
+    }
+
+    pub fn multiplicative(&mut self) -> Result<Expr, ParseError> {
+           let mut expr = self.primary()?;
+   
+           while self.check(Token::Star) || self.check(Token::Slash) {
+               let operator_token = self.advance();
+               let op = match operator_token {
+                   Token::Star => BinOp::Mul,
+                   Token::Slash => BinOp::Div,
+                   _ => unreachable!(),
+               };
+               let right = self.primary()?;
+               expr = Expr::Binary {
+                   op,
+                   left: Box::new(expr),
+                   right: Box::new(right),
+               };
+           }
+   
+           Ok(expr)
+       }
+
+       pub fn comparison(&mut self) -> Result<Expr, ParseError> {
+          
+           let mut expr = self.additive()?;
+       
+      
+           while self.check(Token::EqualsEquals) 
+               || self.check(Token::StrictEquals) 
+               || self.check(Token::NotEquals)
+               || self.check(Token::Less)
+               || self.check(Token::Greater)
+               || self.check(Token::LessEquals)
+               || self.check(Token::GreaterEquals) 
+           {
+               let token = self.advance();
+               let op = match token {
+                   Token::EqualsEquals => BinOp::Eq,
+                   Token::StrictEquals => BinOp::StrictEq,
+                   Token::NotEquals => BinOp::NotEq,
+                   Token::Less => BinOp::Lt,
+                   Token::Greater => BinOp::Gt,
+                   Token::LessEquals => BinOp::LtEq,
+                   Token::GreaterEquals => BinOp::GtEq,
+                   _ => unreachable!(),
+               };
+        
+               let right = self.additive()?;
+               
+               expr = Expr::Binary {
+                   op,
+                   left: Box::new(expr),
+                   right: Box::new(right),
+               };
+           }
+       
+           Ok(expr)
+       }
+
+
+       pub fn additive(&mut self) -> Result<Expr, ParseError> {
+           let mut expr = self.multiplicative()?;
+   
+           while self.check(Token::Plus) || self.check(Token::Minus) {
+               let operator_token = self.advance();
+               let op = match operator_token {
+                   Token::Plus => BinOp::Add,
+                   Token::Minus => BinOp::Sub,
+                   _ => unreachable!(),
+               };
+               let right = self.multiplicative()?;
+               expr = Expr::Binary {
+                   op,
+                   left: Box::new(expr),
+                   right: Box::new(right),
+               };
+           }
+   
+           Ok(expr)
+       }
+   
+     
+       pub fn expression(&mut self) -> Result<Expr, ParseError> {
+           self.comparison()
+       }
+
+
 }
-#[derive(Debug, Clone,PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
     String(String),
@@ -158,20 +294,134 @@ pub enum BinOp {
 }
 
 #[cfg(test)]
-mod tests {
+mod parser_tests {
     use super::*;
 
     #[test]
-    fn test_primary_number(){
-        let tokens = vec![Token::Number(5.0), Token::Eof];
+    fn test_primary_literals() {
+        let tokens = vec![Token::String("hello".to_string()), Token::Eof];
+        let mut parser = Parser::new(tokens);
+        assert_eq!(parser.primary().unwrap(), Expr::String("hello".to_string()));
 
-        let mut new_parser = Parser::new(tokens);
-        
-        let expected  = Expr::Number(5.0);
+        let tokens = vec![Token::Identifier("myVar".to_string()), Token::Eof];
+        let mut parser = Parser::new(tokens);
+        assert_eq!(parser.primary().unwrap(), Expr::Identifier("myVar".to_string()));
 
-        let result =  new_parser.primary().unwrap();
-        println!("{:?}",result);
-        assert_eq!(result, expected)
-        
+        let tokens = vec![Token::True, Token::Eof];
+        let mut parser = Parser::new(tokens);
+        assert_eq!(parser.primary().unwrap(), Expr::Boolean(true));
+
+        let tokens = vec![Token::Null, Token::Eof];
+        let mut parser = Parser::new(tokens);
+        assert_eq!(parser.primary().unwrap(), Expr::Null);
     }
+
+    #[test]
+    fn test_binary_precedence() {
+        let tokens = vec![
+            Token::Number(5.0),
+            Token::Plus,
+            Token::Number(10.0),
+            Token::Star,
+            Token::Number(2.0),
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        let expected = Expr::Binary {
+            op: BinOp::Add,
+            left: Box::new(Expr::Number(5.0)),
+            right: Box::new(Expr::Binary {
+                op: BinOp::Mul,
+                left: Box::new(Expr::Number(10.0)),
+                right: Box::new(Expr::Number(2.0)),
+            }),
+        };
+        assert_eq!(parser.expression().unwrap(), expected);
+    }
+
+    #[test]
+    fn test_let_statement() {
+        let tokens = vec![
+            Token::Let,
+            Token::Identifier("score".to_string()),
+            Token::Equals,
+            Token::Number(100.0),
+            Token::Semicolon,
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        let result = parser.statement().unwrap();
+        
+        match result {
+            Stmt::Let { name, value } => {
+                assert_eq!(name, "score");
+                assert_eq!(value, Expr::Number(100.0));
+            }
+            _ => panic!("Expected Stmt::Let"),
+        }
+    }
+
+    #[test]
+    fn test_expression_statement() {
+        let tokens = vec![
+            Token::Number(10.0),
+            Token::Minus,
+            Token::Number(4.0),
+            Token::Semicolon,
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        let result = parser.statement().unwrap();
+
+        match result {
+            Stmt::ExprStmt(Expr::Binary { op, left, right }) => {
+                assert_eq!(op, BinOp::Sub);
+                assert_eq!(*left, Expr::Number(10.0));
+                assert_eq!(*right, Expr::Number(4.0));
+            }
+            _ => panic!("Expected Stmt::ExprStmt with Binary Expr"),
+        }
+    }
+
+    #[test]
+    fn test_invalid_let_statement() {
+        let tokens = vec![
+            Token::Let,
+            Token::Number(5.0), 
+            Token::Equals,
+            Token::Number(5.0),
+            Token::Semicolon,
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        assert!(parser.statement().is_err());
+    }
+
+    #[test]
+    fn test_comparison_precedence() {
+        let tokens = vec![
+            Token::Number(5.0),
+            Token::Plus,
+            Token::Number(3.0),
+            Token::StrictEquals,
+            Token::Number(8.0),
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        let result = parser.expression().unwrap();
+    
+        let expected = Expr::Binary {
+            op: BinOp::StrictEq,
+            left: Box::new(Expr::Binary {
+                op: BinOp::Add,
+                left: Box::new(Expr::Number(5.0)),
+                right: Box::new(Expr::Number(3.0)),
+            }),
+            right: Box::new(Expr::Number(8.0)),
+        };
+    
+        assert_eq!(result, expected);
+    }
+
 }
+
