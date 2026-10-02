@@ -377,6 +377,43 @@ impl Parser {
             body: Box::new(body),
         })
     }
+
+    pub fn for_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+
+        self.expect(Token::LeftParen)?;
+
+        let init = if self.check(Token::Semicolon) {
+            self.advance();
+            None
+        } else {
+            Some(Box::new(self.statement()?))
+        };
+        let cond = if self.check(Token::Semicolon) {
+            self.advance();
+            None
+        } else {
+            Some(self.expression()?)
+        };
+        self.expect(Token::Semicolon)?;
+
+        let update = if self.check(Token::RightParen) {
+            None
+        } else {
+            Some(self.expression()?)
+        };
+
+        self.expect(Token::RightParen)?;
+        let body = self.statement()?;
+        let stmt = Stmt::For {
+            init: init,
+            cond,
+            update,
+            body: Box::new(body),
+        };
+
+        Ok(stmt)
+    }
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
