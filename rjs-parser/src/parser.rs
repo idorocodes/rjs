@@ -364,6 +364,19 @@ impl Parser {
             else_branch,
         })
     }
+
+    pub fn while_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+        self.expect(Token::LeftParen)?;
+        let cond = self.expression()?;
+        self.expect(Token::RightParen)?;
+
+        let body = self.statement()?;
+        Ok(Stmt::While {
+            cond,
+            body: Box::new(body),
+        })
+    }
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
