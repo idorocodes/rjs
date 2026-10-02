@@ -13,7 +13,7 @@ pub enum Token {
     While,
     For,
     Function,
-    
+
     Return,
     Break,
     Continue,
@@ -53,7 +53,6 @@ pub enum Token {
     // End of input
     Eof,
 }
-
 
 pub fn tokenizer(input: String) -> Vec<Token> {
     let mut tokens: Vec<Token> = Vec::new();
@@ -202,8 +201,6 @@ pub fn tokenizer(input: String) -> Vec<Token> {
     tokens
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,7 +210,6 @@ mod tests {
         let input = "let x = 42; const name = \"js\"; if (true) { return null; }".to_string();
         let tokens = tokenizer(input);
 
-        
         let expected = vec![
             Token::Let,
             Token::Identifier("x".to_string()),
@@ -255,12 +251,12 @@ mod tests {
             Token::Number(1.0),
             Token::OrOr,
             Token::Number(3.0),
-            Token::Identifier("!".to_string()), 
+            Token::Identifier("!".to_string()),
             Token::Equals,
             Token::Number(4.0),
             Token::Eof,
         ];
-        
+
         assert_eq!(tokens[0..9], expected[0..9]);
     }
 

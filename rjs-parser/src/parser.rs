@@ -1,4 +1,4 @@
-use crate::lexer::Token;
+use crate::lexer::Token::{self};
 
 #[derive(Debug, Clone)]
 pub struct Parser {
@@ -80,30 +80,53 @@ impl Parser {
     }
 
     pub fn statement(&mut self) -> Result<Stmt, ParseError> {
-        if self.check(Token::Let) {
-            self.advance();
+        match self.peek() {
+            Token::Let => {
+                self.advance();
 
-            let name = match self.advance() {
-                Token::Identifier(id) => id,
-                other => {
-                    return Err(ParseError {
-                        message: format!("Expected variable name after 'let', found {:?}", other),
-                    });
-                }
-            };
+                let name = match self.advance() {
+                    Token::Identifier(id) => id,
+                    other => {
+                        return Err(ParseError {
+                            message: format!(
+                                "Expected variable name after 'let', found {:?}",
+                                other
+                            ),
+                        });
+                    }
+                };
 
-            self.expect(Token::Equals)?; // consume '='
-            let value = self.expression()?;
-            self.expect(Token::Semicolon)?; // consume ';'
+                self.expect(Token::Equals)?;
+                let value = self.expression()?;
+                self.expect(Token::Semicolon)?;
 
-            Ok(Stmt::Let { name, value })
-        } else {
-            let expr = self.expression()?;
-            self.expect(Token::Semicolon)?;
-            Ok(Stmt::ExprStmt(expr))
+                Ok(Stmt::Let { name, value })
+            }
+            Token::If => self.if_statement(),
+            Token::While => self.while_statement(),
+            Token::For => self.for_statement(),
+            Token::LeftBrace => Ok(Stmt::Block(self.block()?)),
+            Token::Return => self.return_statement(),
+            Token::Function => self.function_declr(),
+            Token::Break => self.breakfn(),
+            Token::Continue => self.continuefn(),
+            _ => {
+                let expr = self.expression()?;
+                self.expect(Token::Semicolon)?;
+                Ok(Stmt::ExprStmt(expr))
+            }
         }
     }
 
+    pub fn program(&mut self) -> Result<Vec<Stmt>, ParseError> {
+        let mut stmts: Vec<Stmt> = Vec::new();
+
+        while !self.check(Token::Eof) {
+            stmts.push(self.statement()?);
+        }
+
+        Ok(stmts)
+    }
     pub fn multiplicative(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.unary()?;
 
@@ -341,7 +364,18 @@ impl Parser {
 
         Ok(stmt)
     }
+    pub fn return_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.advance(); // Consume 'return'
 
+        if self.check(Token::Semicolon) {
+            self.advance(); // Consume ';'
+            Ok(Stmt::Return(None))
+        } else {
+            let expr = self.expression()?;
+            self.expect(Token::Semicolon)?;
+            Ok(Stmt::Return(Some(expr)))
+        }
+    }
     pub fn if_statement(&mut self) -> Result<Stmt, ParseError> {
         self.advance();
 
@@ -377,7 +411,6 @@ impl Parser {
             body: Box::new(body),
         })
     }
-
     pub fn for_statement(&mut self) -> Result<Stmt, ParseError> {
         self.advance();
 
@@ -389,13 +422,15 @@ impl Parser {
         } else {
             Some(Box::new(self.statement()?))
         };
+
         let cond = if self.check(Token::Semicolon) {
-            self.advance();
+            self.advance(); // Consume 2nd ';'
             None
         } else {
-            Some(self.expression()?)
+            let expr = self.expression()?;
+            self.expect(Token::Semicolon)?;
+            Some(expr)
         };
-        self.expect(Token::Semicolon)?;
 
         let update = if self.check(Token::RightParen) {
             None
@@ -405,14 +440,72 @@ impl Parser {
 
         self.expect(Token::RightParen)?;
         let body = self.statement()?;
-        let stmt = Stmt::For {
-            init: init,
+
+        Ok(Stmt::For {
+            init,
             cond,
             update,
             body: Box::new(body),
+        })
+    }
+
+    pub fn breakfn(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+        self.expect(Token::Semicolon)?;
+
+        Ok(Stmt::Break)
+    }
+    pub fn continuefn(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+        self.expect(Token::Semicolon)?;
+
+        Ok(Stmt::Continue)
+    }
+
+    pub fn function_declr(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+        let name = match self.advance() {
+            Token::Identifier(id) => id,
+            other => {
+                return Err(ParseError {
+                    message: format!("Expected function name, found {:?}", other),
+                });
+            }
         };
 
-        Ok(stmt)
+        self.expect(Token::LeftParen)?;
+        let mut params = Vec::new();
+
+        if !self.check(Token::RightParen) {
+            match self.advance() {
+                Token::Identifier(id) => params.push(id),
+                other => {
+                    return Err(ParseError {
+                        message: format!(
+                            "Expected identifier in parameter list, found {:?}",
+                            other
+                        ),
+                    });
+                }
+            }
+
+            while self.check(Token::Comma) {
+                self.advance(); // Consume the comma
+                match self.advance() {
+                    Token::Identifier(id) => params.push(id),
+                    other => {
+                        return Err(ParseError {
+                            message: format!("Expected identifier after comma, found {:?}", other),
+                        });
+                    }
+                }
+            }
+        }
+
+        self.expect(Token::RightParen)?;
+
+        let body = self.block()?;
+        Ok(Stmt::FunctionDecl { name, params, body })
     }
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -455,7 +548,7 @@ pub enum Expr {
     ArrayLiteral(Vec<Expr>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Let {
         name: String,
@@ -648,5 +741,308 @@ mod parser_tests {
         };
 
         assert_eq!(result, expected);
+    }
+
+    fn parse_stmts(tokens: Vec<Token>) -> Result<Vec<Stmt>, ParseError> {
+        let mut parser = Parser::new(tokens);
+        parser.program()
+    }
+
+    #[test]
+    fn test_unexpected_primary_token() {
+        let tokens = vec![Token::Plus, Token::Eof];
+        let mut parser = Parser::new(tokens);
+        assert!(parser.primary().is_err());
+    }
+
+    #[test]
+    fn test_operator_precedence() {
+        // 1 + 2 * 3 == 7 && !false
+        let tokens = vec![
+            Token::Number(1.0),
+            Token::Plus,
+            Token::Number(2.0),
+            Token::Star,
+            Token::Number(3.0),
+            Token::EqualsEquals,
+            Token::Number(7.0),
+            Token::AndAnd,
+            Token::Bang,
+            Token::False,
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+
+        let expected = Expr::Binary {
+            op: BinOp::And,
+            left: Box::new(Expr::Binary {
+                op: BinOp::Eq,
+                left: Box::new(Expr::Binary {
+                    op: BinOp::Add,
+                    left: Box::new(Expr::Number(1.0)),
+                    right: Box::new(Expr::Binary {
+                        op: BinOp::Mul,
+                        left: Box::new(Expr::Number(2.0)),
+                        right: Box::new(Expr::Number(3.0)),
+                    }),
+                }),
+                right: Box::new(Expr::Number(7.0)),
+            }),
+            right: Box::new(Expr::Unary {
+                op: UnaryOp::Not,
+                operand: Box::new(Expr::Boolean(false)),
+            }),
+        };
+
+        assert_eq!(parser.expression().unwrap(), expected);
+    }
+
+    #[test]
+    fn test_postfix_operations() {
+        // obj.prop[0](a, b)
+        let tokens = vec![
+            Token::Identifier("obj".to_string()),
+            Token::Dot,
+            Token::Identifier("prop".to_string()),
+            Token::LeftBracket,
+            Token::Number(0.0),
+            Token::RightBracket,
+            Token::LeftParen,
+            Token::Identifier("a".to_string()),
+            Token::Comma,
+            Token::Identifier("b".to_string()),
+            Token::RightParen,
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+
+        let expected = Expr::Call {
+            callee: Box::new(Expr::Index {
+                object: Box::new(Expr::Member {
+                    object: Box::new(Expr::Identifier("obj".to_string())),
+                    property: "prop".to_string(),
+                }),
+                index: Box::new(Expr::Number(0.0)),
+            }),
+            args: vec![
+                Expr::Identifier("a".to_string()),
+                Expr::Identifier("b".to_string()),
+            ],
+        };
+
+        assert_eq!(parser.expression().unwrap(), expected);
+    }
+
+    #[test]
+    fn test_assignment_right_associativity() {
+        // x = y = 5
+        let tokens = vec![
+            Token::Identifier("x".to_string()),
+            Token::Equals,
+            Token::Identifier("y".to_string()),
+            Token::Equals,
+            Token::Number(5.0),
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+
+        let expected = Expr::Assign {
+            name: "x".to_string(),
+            value: Box::new(Expr::Assign {
+                name: "y".to_string(),
+                value: Box::new(Expr::Number(5.0)),
+            }),
+        };
+
+        assert_eq!(parser.expression().unwrap(), expected);
+    }
+
+    #[test]
+    fn test_invalid_assignment_target() {
+        // 5 = x
+        let tokens = vec![
+            Token::Number(5.0),
+            Token::Equals,
+            Token::Identifier("x".to_string()),
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        assert!(parser.expression().is_err());
+    }
+
+    #[test]
+    fn test_if_else_statement() {
+        // if (x) { return true; } else { return false; }
+        let tokens = vec![
+            Token::If,
+            Token::LeftParen,
+            Token::Identifier("x".to_string()),
+            Token::RightParen,
+            Token::LeftBrace,
+            Token::Return,
+            Token::True,
+            Token::Semicolon,
+            Token::RightBrace,
+            Token::Else,
+            Token::LeftBrace,
+            Token::Return,
+            Token::False,
+            Token::Semicolon,
+            Token::RightBrace,
+            Token::Eof,
+        ];
+
+        let expected = vec![Stmt::If {
+            cond: Expr::Identifier("x".to_string()),
+            then_branch: Box::new(Stmt::Block(vec![Stmt::Return(Some(Expr::Boolean(true)))])),
+            else_branch: Some(Box::new(Stmt::Block(vec![Stmt::Return(Some(
+                Expr::Boolean(false),
+            ))]))),
+        }];
+
+        assert_eq!(parse_stmts(tokens).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_while_loop() {
+        // while (running) { break; }
+        let tokens = vec![
+            Token::While,
+            Token::LeftParen,
+            Token::Identifier("running".to_string()),
+            Token::RightParen,
+            Token::LeftBrace,
+            Token::Break,
+            Token::Semicolon,
+            Token::RightBrace,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let stmt = parser.statement().unwrap();
+
+        let expected = Stmt::While {
+            cond: Expr::Identifier("running".to_string()),
+            body: Box::new(Stmt::Block(vec![Stmt::Break])),
+        };
+
+        assert_eq!(stmt, expected);
+    }
+
+    #[test]
+    fn test_for_loop() {
+        // for (let i = 0; i < 10; i = i + 1) { continue; }
+        let tokens = vec![
+            Token::For,
+            Token::LeftParen,
+            Token::Let,
+            Token::Identifier("i".to_string()),
+            Token::Equals,
+            Token::Number(0.0),
+            Token::Semicolon,
+            Token::Identifier("i".to_string()),
+            Token::Less,
+            Token::Number(10.0),
+            Token::Semicolon,
+            Token::Identifier("i".to_string()),
+            Token::Equals,
+            Token::Identifier("i".to_string()),
+            Token::Plus,
+            Token::Number(1.0),
+            Token::RightParen,
+            Token::LeftBrace,
+            Token::Continue,
+            Token::Semicolon,
+            Token::RightBrace,
+            Token::Eof,
+        ];
+
+        let expected = vec![Stmt::For {
+            init: Some(Box::new(Stmt::Let {
+                name: "i".to_string(),
+                value: Expr::Number(0.0),
+            })),
+            cond: Some(Expr::Binary {
+                op: BinOp::Lt,
+                left: Box::new(Expr::Identifier("i".to_string())),
+                right: Box::new(Expr::Number(10.0)),
+            }),
+            update: Some(Expr::Assign {
+                name: "i".to_string(),
+                value: Box::new(Expr::Binary {
+                    op: BinOp::Add,
+                    left: Box::new(Expr::Identifier("i".to_string())),
+                    right: Box::new(Expr::Number(1.0)),
+                }),
+            }),
+            body: Box::new(Stmt::Block(vec![Stmt::Continue])),
+        }];
+
+        assert_eq!(parse_stmts(tokens).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_function_declaration() {
+        // function add(a, b) { return a + b; }
+        let tokens = vec![
+            Token::Function,
+            Token::Identifier("add".to_string()),
+            Token::LeftParen,
+            Token::Identifier("a".to_string()),
+            Token::Comma,
+            Token::Identifier("b".to_string()),
+            Token::RightParen,
+            Token::LeftBrace,
+            Token::Return,
+            Token::Identifier("a".to_string()),
+            Token::Plus,
+            Token::Identifier("b".to_string()),
+            Token::Semicolon,
+            Token::RightBrace,
+            Token::Eof,
+        ];
+
+        let expected = vec![Stmt::FunctionDecl {
+            name: "add".to_string(),
+            params: vec!["a".to_string(), "b".to_string()],
+            body: vec![Stmt::Return(Some(Expr::Binary {
+                op: BinOp::Add,
+                left: Box::new(Expr::Identifier("a".to_string())),
+                right: Box::new(Expr::Identifier("b".to_string())),
+            }))],
+        }];
+
+        assert_eq!(parse_stmts(tokens).unwrap(), expected);
+    }
+
+    // --- ERROR HANDLING TESTS ---
+
+    #[test]
+    fn test_missing_semicolon() {
+        let tokens = vec![
+            Token::Let,
+            Token::Identifier("a".to_string()),
+            Token::Equals,
+            Token::Number(1.0),
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        assert!(parser.statement().is_err());
+    }
+
+    #[test]
+    fn test_invalid_function_param() {
+        let tokens = vec![
+            Token::Function,
+            Token::Identifier("foo".to_string()),
+            Token::LeftParen,
+            Token::Number(123.0),
+            Token::RightParen,
+            Token::LeftBrace,
+            Token::RightBrace,
+            Token::Eof,
+        ];
+        let mut parser = Parser::new(tokens);
+        assert!(parser.statement().is_err());
     }
 }
