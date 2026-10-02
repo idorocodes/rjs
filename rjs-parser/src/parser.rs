@@ -81,14 +81,15 @@ impl Parser {
 
     pub fn statement(&mut self) -> Result<Stmt, ParseError> {
         if self.check(Token::Let) {
-            self.advance(); 
-            
-         
+            self.advance();
+
             let name = match self.advance() {
                 Token::Identifier(id) => id,
-                other => return Err(ParseError {
-                    message: format!("Expected variable name after 'let', found {:?}", other),
-                }),
+                other => {
+                    return Err(ParseError {
+                        message: format!("Expected variable name after 'let', found {:?}", other),
+                    });
+                }
             };
 
             self.expect(Token::Equals)?; // consume '='
@@ -97,7 +98,6 @@ impl Parser {
 
             Ok(Stmt::Let { name, value })
         } else {
-           
             let expr = self.expression()?;
             self.expect(Token::Semicolon)?;
             Ok(Stmt::ExprStmt(expr))
@@ -105,91 +105,265 @@ impl Parser {
     }
 
     pub fn multiplicative(&mut self) -> Result<Expr, ParseError> {
-           let mut expr = self.primary()?;
-   
-           while self.check(Token::Star) || self.check(Token::Slash) {
-               let operator_token = self.advance();
-               let op = match operator_token {
-                   Token::Star => BinOp::Mul,
-                   Token::Slash => BinOp::Div,
-                   _ => unreachable!(),
-               };
-               let right = self.primary()?;
-               expr = Expr::Binary {
-                   op,
-                   left: Box::new(expr),
-                   right: Box::new(right),
-               };
-           }
-   
-           Ok(expr)
-       }
+        let mut expr = self.unary()?;
 
-       pub fn comparison(&mut self) -> Result<Expr, ParseError> {
-          
-           let mut expr = self.additive()?;
-       
-      
-           while self.check(Token::EqualsEquals) 
-               || self.check(Token::StrictEquals) 
-               || self.check(Token::NotEquals)
-               || self.check(Token::Less)
-               || self.check(Token::Greater)
-               || self.check(Token::LessEquals)
-               || self.check(Token::GreaterEquals) 
-           {
-               let token = self.advance();
-               let op = match token {
-                   Token::EqualsEquals => BinOp::Eq,
-                   Token::StrictEquals => BinOp::StrictEq,
-                   Token::NotEquals => BinOp::NotEq,
-                   Token::Less => BinOp::Lt,
-                   Token::Greater => BinOp::Gt,
-                   Token::LessEquals => BinOp::LtEq,
-                   Token::GreaterEquals => BinOp::GtEq,
-                   _ => unreachable!(),
-               };
-        
-               let right = self.additive()?;
-               
-               expr = Expr::Binary {
-                   op,
-                   left: Box::new(expr),
-                   right: Box::new(right),
-               };
-           }
-       
-           Ok(expr)
-       }
+        while self.check(Token::Star) || self.check(Token::Slash) {
+            let operator_token = self.advance();
+            let op = match operator_token {
+                Token::Star => BinOp::Mul,
+                Token::Slash => BinOp::Div,
+                _ => unreachable!(),
+            };
+            let right = self.unary()?;
+            expr = Expr::Binary {
+                op,
+                left: Box::new(expr),
+                right: Box::new(right),
+            };
+        }
 
+        Ok(expr)
+    }
 
-       pub fn additive(&mut self) -> Result<Expr, ParseError> {
-           let mut expr = self.multiplicative()?;
-   
-           while self.check(Token::Plus) || self.check(Token::Minus) {
-               let operator_token = self.advance();
-               let op = match operator_token {
-                   Token::Plus => BinOp::Add,
-                   Token::Minus => BinOp::Sub,
-                   _ => unreachable!(),
-               };
-               let right = self.multiplicative()?;
-               expr = Expr::Binary {
-                   op,
-                   left: Box::new(expr),
-                   right: Box::new(right),
-               };
-           }
-   
-           Ok(expr)
-       }
-   
-     
-       pub fn expression(&mut self) -> Result<Expr, ParseError> {
-           self.comparison()
-       }
+    pub fn logical_and(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.comparison()?;
 
+        while self.check(Token::AndAnd) {
+            let token = self.advance();
+            let right = self.comparison()?;
 
+            let op = match token {
+                Token::AndAnd => BinOp::And,
+                _ => unreachable!(),
+            };
+            expr = Expr::Binary {
+                op,
+                left: Box::new(expr),
+                right: Box::new(right),
+            }
+        }
+
+        Ok(expr)
+    }
+
+    pub fn logical_or(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.logical_and()?;
+
+        while self.check(Token::OrOr) {
+            self.advance();
+            let right = self.logical_and()?;
+            expr = Expr::Binary {
+                op: BinOp::Or,
+                left: Box::new(expr),
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    pub fn comparison(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.additive()?;
+
+        while self.check(Token::EqualsEquals)
+            || self.check(Token::StrictEquals)
+            || self.check(Token::NotEquals)
+            || self.check(Token::Less)
+            || self.check(Token::Greater)
+            || self.check(Token::LessEquals)
+            || self.check(Token::GreaterEquals)
+        {
+            let token = self.advance();
+            let op = match token {
+                Token::EqualsEquals => BinOp::Eq,
+                Token::StrictEquals => BinOp::StrictEq,
+                Token::NotEquals => BinOp::NotEq,
+                Token::Less => BinOp::Lt,
+                Token::Greater => BinOp::Gt,
+                Token::LessEquals => BinOp::LtEq,
+                Token::GreaterEquals => BinOp::GtEq,
+                _ => unreachable!(),
+            };
+
+            let right = self.additive()?;
+
+            expr = Expr::Binary {
+                op,
+                left: Box::new(expr),
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    pub fn additive(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.multiplicative()?;
+
+        while self.check(Token::Plus) || self.check(Token::Minus) {
+            let operator_token = self.advance();
+            let op = match operator_token {
+                Token::Plus => BinOp::Add,
+                Token::Minus => BinOp::Sub,
+                _ => unreachable!(),
+            };
+            let right = self.multiplicative()?;
+            expr = Expr::Binary {
+                op,
+                left: Box::new(expr),
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+    pub fn postfix(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.primary()?;
+
+        while self.check(Token::LeftParen)
+            || self.check(Token::LeftBracket)
+            || self.check(Token::Dot)
+        {
+            let token = self.advance();
+
+            expr = match token {
+                Token::Dot => {
+                    let property = match self.advance() {
+                        Token::Identifier(name) => name,
+                        other => {
+                            return Err(ParseError {
+                                message: format!(
+                                    "Expected property name after '.', found {:?}",
+                                    other
+                                ),
+                            });
+                        }
+                    };
+
+                    Expr::Member {
+                        object: Box::new(expr),
+                        property,
+                    }
+                }
+
+                Token::LeftBracket => {
+                    let index = self.expression()?;
+                    self.expect(Token::RightBracket)?;
+
+                    Expr::Index {
+                        object: Box::new(expr),
+                        index: Box::new(index),
+                    }
+                }
+
+                Token::LeftParen => {
+                    let mut args = Vec::new();
+
+                    if !self.check(Token::RightParen) {
+                        args.push(self.expression()?);
+
+                        while self.check(Token::Comma) {
+                            self.advance(); // consume the comma
+                            args.push(self.expression()?);
+                        }
+                    }
+
+                    self.expect(Token::RightParen)?;
+
+                    Expr::Call {
+                        callee: Box::new(expr),
+                        args,
+                    }
+                }
+
+                _ => unreachable!(), // the while condition already guarantees one of the three above
+            };
+        }
+
+        Ok(expr)
+    }
+
+    pub fn unary(&mut self) -> Result<Expr, ParseError> {
+        if self.check(Token::Minus) || self.check(Token::Bang) {
+            let current = self.advance();
+            let operand = self.unary()?;
+
+            let op = match current {
+                Token::Minus => UnaryOp::Neg,
+                Token::Bang => UnaryOp::Not,
+                _ => unreachable!(),
+            };
+
+            Ok(Expr::Unary {
+                op,
+                operand: Box::new(operand),
+            })
+        } else {
+            self.postfix()
+        }
+    }
+    pub fn assignment(&mut self) -> Result<Expr, ParseError> {
+        let expr = self.logical_or()?;
+
+        if self.check(Token::Equals) {
+            let name = match expr {
+                Expr::Identifier(name) => name,
+                _ => {
+                    return Err(ParseError {
+                        message: "Invalid assignment target".to_string(),
+                    });
+                }
+            };
+
+            self.advance(); // consume '='
+            let value = self.assignment()?; // right-associative
+
+            Ok(Expr::Assign {
+                name,
+                value: Box::new(value),
+            })
+        } else {
+            Ok(expr)
+        }
+    }
+    pub fn expression(&mut self) -> Result<Expr, ParseError> {
+        self.assignment()
+    }
+
+    pub fn block(&mut self) -> Result<Vec<Stmt>, ParseError> {
+        self.advance();
+        let mut stmt: Vec<Stmt> = Vec::new();
+
+        while !self.check(Token::RightBrace) && !self.check(Token::Eof) {
+            stmt.push(self.statement()?);
+        }
+        self.expect(Token::RightBrace)?;
+
+        Ok(stmt)
+    }
+
+    pub fn if_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+
+        self.expect(Token::LeftParen)?;
+        let cond = self.expression()?;
+        self.expect(Token::RightParen)?;
+
+        let then_branch = self.statement()?;
+
+        let else_branch = if self.check(Token::Else) {
+            self.advance();
+            Some(Box::new(self.statement()?))
+        } else {
+            None
+        };
+
+        Ok(Stmt::If {
+            cond,
+            then_branch: Box::new(then_branch),
+            else_branch,
+        })
+    }
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -305,7 +479,10 @@ mod parser_tests {
 
         let tokens = vec![Token::Identifier("myVar".to_string()), Token::Eof];
         let mut parser = Parser::new(tokens);
-        assert_eq!(parser.primary().unwrap(), Expr::Identifier("myVar".to_string()));
+        assert_eq!(
+            parser.primary().unwrap(),
+            Expr::Identifier("myVar".to_string())
+        );
 
         let tokens = vec![Token::True, Token::Eof];
         let mut parser = Parser::new(tokens);
@@ -351,7 +528,7 @@ mod parser_tests {
         ];
         let mut parser = Parser::new(tokens);
         let result = parser.statement().unwrap();
-        
+
         match result {
             Stmt::Let { name, value } => {
                 assert_eq!(name, "score");
@@ -387,7 +564,7 @@ mod parser_tests {
     fn test_invalid_let_statement() {
         let tokens = vec![
             Token::Let,
-            Token::Number(5.0), 
+            Token::Number(5.0),
             Token::Equals,
             Token::Number(5.0),
             Token::Semicolon,
@@ -409,7 +586,7 @@ mod parser_tests {
         ];
         let mut parser = Parser::new(tokens);
         let result = parser.expression().unwrap();
-    
+
         let expected = Expr::Binary {
             op: BinOp::StrictEq,
             left: Box::new(Expr::Binary {
@@ -419,9 +596,7 @@ mod parser_tests {
             }),
             right: Box::new(Expr::Number(8.0)),
         };
-    
+
         assert_eq!(result, expected);
     }
-
 }
-
